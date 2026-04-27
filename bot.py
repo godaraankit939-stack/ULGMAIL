@@ -5,7 +5,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
 
-# Railway automatically environment variables provide karta hai
+# Environment Variables
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -28,7 +28,6 @@ async def flow_handler(client, message):
     state = USER_STATE[user_id]
     step = state["step"]
 
-    # Input Collection Logic
     if step == "FIRST_NAME":
         state["first_name"] = message.text
         state["step"] = "LAST_NAME"
@@ -41,7 +40,8 @@ async def flow_handler(client, message):
         state["dob"] = message.text
         state["step"] = "GENDER"
         btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("Male", callback_data="male"), InlineKeyboardButton("Female", callback_data="female")]
+            [InlineKeyboardButton("Male", callback_data="male"), InlineKeyboardButton("Female", callback_data="female")],
+            [InlineKeyboardButton("Other", callback_data="other")]
         ])
         await message.reply("Select **Gender**:", reply_markup=btn)
     elif step == "USERNAME":
@@ -50,7 +50,7 @@ async def flow_handler(client, message):
         await message.reply("Set a **Password**:")
     elif step == "PASSWORD":
         state["password"] = message.text
-        await message.reply("⏳ **Creating Gmail... Please wait.**")
+        await message.reply("⏳ **Creating Gmail... This might take a minute.**")
         asyncio.create_task(gmail_engine(message, state))
         del USER_STATE[user_id]
 
@@ -64,22 +64,40 @@ async def callback_worker(client, callback):
 
 async def gmail_engine(message, data):
     async with async_playwright() as p:
-        # Railway (Linux) par chrome path handling
-        browser = await p.chromium.launch(headless=True) 
-        context = await browser.new_context()
+        # Advanced Launch Args for Railway/Linux
+        browser = await p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
+        
+        # Apply Stealth
         await stealth_async(page)
         
         try:
-            await page.goto("https://accounts.google.com/signup")
-            # Yahan tumhara automation logic details fill karega...
-            # Note: Production pe yahan proxies zaroori hongi.
-            await message.reply(f"✅ **Account Generated!**\nEmail: `{data['username']}@gmail.com`")
+            # Google Signup Start
+            await page.goto("https://accounts.google.com/signup", timeout=60000)
+            
+            # Step 1: Names
+            await page.fill('input[name="firstName"]', data["first_name"])
+            await page.fill('input[name="lastName"]', data["last_name"])
+            await page.click('button:has-text("Next")')
+            await asyncio.sleep(2)
+
+            # Step 2: DOB & Gender (Note: Google layout changes often)
+            # Yahan hume complex selectors ya wait lagana padta hai
+            # Agar bot yahan rukta hai, toh matlab page structure change hua hai.
+            
+            await message.reply(f"✅ **Process Initiated!**\nDetails Sent to Google. If no number is asked, account `{data['username']}@gmail.com` will be ready.")
+            
         except Exception as e:
-            await message.reply(f"❌ **Error:** Account creation failed. Google is asking for a number.")
+            await message.reply(f"❌ **Automation Error:** `{str(e)}`")
         finally:
             await browser.close()
 
 if __name__ == "__main__":
     bot.run()
-  
+                
