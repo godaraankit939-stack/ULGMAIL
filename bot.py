@@ -5,10 +5,13 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
 
-# Environment Variables
+# Railway automatically environment variables provide karta hai
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# Force Playwright to use the local browser path on Railway
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
 bot = Client("gmail_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
@@ -37,6 +40,8 @@ async def flow_handler(client, message):
         state["step"] = "DOB"
         await message.reply("Enter **DOB (DD/MM/YYYY)**:")
     elif step == "DOB":
+        if "/" not in message.text:
+            return await message.reply("❌ Use format DD/MM/YYYY")
         state["dob"] = message.text
         state["step"] = "GENDER"
         btn = InlineKeyboardMarkup([
@@ -49,7 +54,7 @@ async def flow_handler(client, message):
         await message.reply("Set a **Password**:")
     elif step == "PASSWORD":
         state["password"] = message.text
-        status_msg = await message.reply("⏳ **Starting Automation Engine...**")
+        status_msg = await message.reply("⏳ **Initializing Engine...**")
         asyncio.create_task(gmail_engine(status_msg, state))
         del USER_STATE[user_id]
 
@@ -64,9 +69,23 @@ async def callback_worker(client, callback):
 async def gmail_engine(status_msg, data):
     async with async_playwright() as p:
         try:
-            await status_msg.edit("🌐 **Launching Stealth Browser...**")
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-            context = await browser.new_context(user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36")
+            await status_msg.edit("🌐 **Launching Browser (Railway Mode)...**")
+            
+            # Advanced Launch for Railway
+            browser = await p.chromium.launch(
+                headless=True, 
+                args=[
+                    "--no-sandbox", 
+                    "--disable-setuid-sandbox", 
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--single-process"
+                ]
+            )
+            
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36"
+            )
             page = await context.new_page()
             await stealth_async(page)
             
@@ -79,7 +98,7 @@ async def gmail_engine(status_msg, data):
             await page.fill('input[name="firstName"]', data["first_name"])
             await page.fill('input[name="lastName"]', data["last_name"])
             await page.click('button:has-text("Next"), #collectNameNext')
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
 
             # --- STEP 3: FILL DOB ---
             await status_msg.edit("📅 **Filling Date of Birth & Gender...**")
@@ -89,36 +108,42 @@ async def gmail_engine(status_msg, data):
             await page.fill('input[name="year"]', year)
             await page.select_option('select#gender', value=data["gender"])
             await page.click('button:has-text("Next"), #basicDegNext')
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
 
             # --- STEP 4: USERNAME ---
-            await status_msg.edit("🔍 **Selecting Username...**")
-            if await page.is_visible('input[name="Username"]'):
-                await page.fill('input[name="Username"]', data["username"])
-            else:
-                await page.click('div[role="radio"]:last-child') 
-            await page.click('button:has-text("Next"), #next')
-            await asyncio.sleep(3)
+            await status_msg.edit("🔍 **Checking Username Availability...**")
+            # Logic for Username selection
+            try:
+                if await page.is_visible('input[name="Username"]'):
+                    await page.fill('input[name="Username"]', data["username"])
+                else:
+                    await page.click('div[role="radio"]:last-child')
+                await page.click('button:has-text("Next"), #next')
+            except:
+                await status_msg.edit("⚠️ **Username not available or Page changed.**")
+
+            await asyncio.sleep(4)
 
             # --- STEP 5: PASSWORD ---
-            await status_msg.edit("🔐 **Setting Password...**")
+            await status_msg.edit("🔐 **Finalizing Password...**")
             await page.fill('input[name="Passwd"]', data["password"])
             await page.fill('input[name="ConfirmPasswd"]', data["password"])
             await page.click('button:has-text("Next")')
             await asyncio.sleep(5)
 
             # --- STEP 6: SECURITY CHECK ---
-            await status_msg.edit("🛡️ **Checking for Phone Verification...**")
+            await status_msg.edit("🛡️ **Bypassing Security Checks...**")
             if "phone" in page.url.lower() or await page.query_selector('input[type="tel"]'):
-                await status_msg.edit("❌ **Atka Hai:** Google is asking for a **Phone Number**. Railway IP blocked.")
+                await status_msg.edit("❌ **Atka Hai:** Google asked for a **Phone Number**. Railway IP is likely flagged.")
             else:
                 await status_msg.edit(f"✅ **Account Created!**\nEmail: `{data['username']}@gmail.com`")
 
         except Exception as e:
             await status_msg.edit(f"⚠️ **Error At:** `{str(e)[:100]}`")
         finally:
-            await browser.close()
+            if 'browser' in locals():
+                await browser.close()
 
 if __name__ == "__main__":
     bot.run()
-    
+                
